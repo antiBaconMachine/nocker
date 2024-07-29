@@ -44,6 +44,24 @@ describe("Index", () => {
   });
 
   it("should fake a response to an endpoint when the method is changed", async () => {
+    const app = express();
+    // This is a hack to change the method from GET to POST. We do this literally just to support nock which doesn't work well with http-proxy-middleware because it works by mocking the http request method which is called early in the proxy lifecycle. If we use the onProxyReq method to alter the method at a later time (but still before the request is sent) nock will still be waiting for the original method as it will already have bootstrapped it's interceptor by now
+    app.use((req, _, next) => {
+      req.method = "POST";
+      next();
+    });
+    app.use(
+      createProxyMiddleware({
+        target: "http://localhost:6666",
+        on: {
+          proxyReq: (proxyReq, req, res) => {
+            proxyReq.setHeader("x-foo", "bar");
+            proxyReq.end();
+          },
+        },
+      })
+    );
+
     const scope = nock("http://localhost:6666");
     scope.post("/").reply(200, { data: "Hello World" });
     scope.on("request", (req, interceptor, body) => {
@@ -51,26 +69,8 @@ describe("Index", () => {
         url: req.url,
         method: req.method,
         body,
-        headers: req.headers,
       });
     });
-
-    const app = express();
-    app.use(
-      createProxyMiddleware({
-        target: "http://localhost:6666",
-        on: {
-          proxyReq: (proxyReq, req, res) => {
-            proxyReq.setHeader("x-foo", "bar");
-            proxyReq.method = "POST";
-            proxyReq.end();
-          },
-          error: (err, req, res) => {
-            console.log("ERROR", err);
-          },
-        },
-      })
-    );
 
     await request(app)
       .get("/")
